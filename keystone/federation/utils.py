@@ -425,11 +425,19 @@ def transform_to_group_ids(group_names, mapping_id,
                      domain.get('name')).get('id'))
         return domain_id
 
+    group_ids_array = []
     for group in group_names:
         try:
-            group_dict = identity_api.get_group_by_name(
-                group['name'], resolve_domain(group['domain']))
-            yield group_dict['id']
+            try:
+                val_group = ast.literal_eval(group['name'])
+                for group_name in val_group:
+                    group_dict = identity_api.get_group_by_name(group_name, resolve_domain(group['domain']))
+                    group_ids_array.append(group_dict['id'])
+                yield from group_ids_array
+            except ValueError:
+                group_dict = identity_api.get_group_by_name(
+                    group['name'], resolve_domain(group['domain']))
+                yield group_dict['id']
         except exception.GroupNotFound:
             LOG.debug('Group %s has no entry in the backend',
                       group['name'])
@@ -562,31 +570,17 @@ class RuleProcessor(object):
         LOG.debug('mapped_properties: %s', mapped_properties)
         return mapped_properties
 
-    def _ast_literal_eval(self, value):
-        # This is a workaround for the fact that ast.literal_eval handles the
-        # case of either a string or a list of strings, but not a potential
-        # list of ints.
-
-        try:
-            values = ast.literal_eval(value)
-            # NOTE(mnaser): It's possible that the group_names_list is a
-            #               numerical value which would successfully parse
-            #               and not raise an exception, so we forcefully
-            #               raise is here.
-            if not isinstance(values, list):
-                raise ValueError
-        except (ValueError, SyntaxError):
-            values = [value]
-
-        return values
-
     def _normalize_groups(self, identity_value):
         # In this case, identity_value['groups'] is a string
         # representation of a list, and we want a real list.  This is
         # due to the way we do direct mapping substitutions today (see
         # function _update_local_mapping() )
         if 'name' in identity_value['groups']:
-            group_names_list = self._ast_literal_eval(identity_value['groups'])
+            try:
+                group_names_list = ast.literal_eval(
+                    identity_value['groups'])
+            except (ValueError, SyntaxError):
+                group_names_list = [identity_value['groups']]
 
             def convert_json(group):
                 if group.startswith('JSON:'):
@@ -608,8 +602,11 @@ class RuleProcessor(object):
                         "specified.")
                 msg = msg % {'identity_value': identity_value}
                 raise exception.ValidationError(msg)
-            group_names_list = self._ast_literal_eval(
-                identity_value['groups'])
+            try:
+                group_names_list = ast.literal_eval(
+                    identity_value['groups'])
+            except (ValueError, SyntaxError):
+                group_names_list = [identity_value['groups']]
             domain = identity_value['domain']
             group_dicts = [{'name': name, 'domain': domain} for name in
                            group_names_list]
@@ -710,8 +707,11 @@ class RuleProcessor(object):
                 # group_ids parameter contains only one element, it will be
                 # parsed as a simple string, and not a list or the
                 # representation of a list.
-                group_ids.update(
-                    self._ast_literal_eval(identity_value['group_ids']))
+                try:
+                    group_ids.update(
+                        ast.literal_eval(identity_value['group_ids']))
+                except (ValueError, SyntaxError):
+                    group_ids.update([identity_value['group_ids']])
             if 'projects' in identity_value:
                 projects = identity_value['projects']
 
